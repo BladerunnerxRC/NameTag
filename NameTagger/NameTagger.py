@@ -3,6 +3,8 @@ import adsk.fusion
 import traceback
 import re
 import datetime
+import os
+import json
 
 handlers = []
 
@@ -14,6 +16,31 @@ settings = {
     "regex": r"\s*v\d+$",
     "export_path": "",
 }
+
+# Path where rename history will be stored.
+HISTORY_FILE = os.path.join(os.path.dirname(__file__), "rename_history.json")
+
+
+def _log_history(old_name: str, new_name: str, source: str) -> None:
+    """Append rename information to HISTORY_FILE."""
+    entry = {
+        "timestamp": datetime.datetime.now().isoformat(),
+        "old_name": old_name,
+        "new_name": new_name,
+        "source": source,
+    }
+    try:
+        if os.path.exists(HISTORY_FILE):
+            with open(HISTORY_FILE, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        else:
+            data = []
+        data.append(entry)
+        with open(HISTORY_FILE, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+    except Exception as exc:
+        # Logging to Fusion console for debugging only; failure shouldn't stop renaming
+        adsk.core.Application.get().log(f"History log failed: {exc}")
 
 # IDs used for the command and UI elements so we can clean them up properly.
 CMD_ID = "NameTaggerSettingsCmd"
@@ -52,9 +79,13 @@ class DocumentSavingHandler(adsk.core.DocumentEventHandler):
             clean = rename_document(original, doc)
             if original != clean:
                 doc.name = clean
+                source = (
+                    "autosave" if getattr(args, "isAutoSave", False) else "manual"
+                )
                 adsk.core.Application.get().log(
                     f"Renamed document from '{original}' to '{clean}'"
                 )
+                _log_history(original, clean, source)
         except Exception:
             adsk.core.Application.get().log(
                 "Failed:\n{}".format(traceback.format_exc())
