@@ -1,0 +1,12 @@
+{
+  "id": "NameTagger",
+  "type": "addin",
+  "autodeskProduct": "Fusion360",
+  "version": "1.0.0",
+  "author": "BladerunnerxRC",
+  "description": {
+    "": "Removes trailing version numbers from document names on save."
+  },
+  "supportedOS": "win64|mac",
+  "runOnStartup": false
+}
