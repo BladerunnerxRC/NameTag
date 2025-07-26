@@ -1,4 +1,4 @@
-# NameTagger
+# CleanVersionOnSave
 
 A simple Fusion 360 add-in that cleans up document names when they are saved.
 By default it removes trailing version numbers such as `v1` or `v23`, but the
