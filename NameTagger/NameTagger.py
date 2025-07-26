@@ -42,6 +42,42 @@ def _log_history(old_name: str, new_name: str, source: str) -> None:
         # Logging to Fusion console for debugging only; failure shouldn't stop renaming
         adsk.core.Application.get().log(f"History log failed: {exc}")
 
+
+_INVALID_CHARS = re.compile(r"[\\/\\?\\*:]")
+
+
+def _name_collision(name: str, doc) -> bool:
+    """Return True if another data file in the parent folder has ``name``."""
+    try:
+        df = getattr(doc, "dataFile", None)
+        if not df:
+            return False
+        parent = df.parentFolder
+        for item in parent.dataFiles:
+            if item.name == name and item.id != df.id:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _validate_name(name: str, doc) -> str:
+    """Sanitize ``name`` and warn about potential issues."""
+    app = adsk.core.Application.get()
+    if _INVALID_CHARS.search(name):
+        app.log(f"Invalid characters removed from '{name}'")
+        name = _INVALID_CHARS.sub("_", name)
+
+    max_len = 128
+    if len(name) > max_len:
+        app.log(f"Name truncated to {max_len} characters")
+        name = name[:max_len]
+
+    if _name_collision(name, doc):
+        app.log(f"Warning: a file named '{name}' already exists")
+
+    return name
+
 # IDs used for the command and UI elements so we can clean them up properly.
 CMD_ID = "NameTaggerSettingsCmd"
 _cmd_def = None
@@ -52,19 +88,22 @@ def rename_document(name: str, doc) -> str:
     """Apply the selected renaming strategy to ``name``."""
     pattern = settings.get("regex", r"\s*v\d+$")
     if not re.search(pattern, name):
-        return name
+        return _validate_name(name, doc)
 
     strategy = settings.get("strategy", "remove")
     if strategy == "timestamp":
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        return re.sub(pattern, ts, name)
+        new_name = re.sub(pattern, ts, name)
+        return _validate_name(new_name, doc)
     elif strategy == "revision":
         rev = getattr(doc, "revisionId", "1")
         base = re.sub(pattern, "", name)
-        return f"r{rev}_{base}"
+        new_name = f"r{rev}_{base}"
+        return _validate_name(new_name, doc)
 
     # Default behaviour is to remove the suffix
-    return re.sub(pattern, "", name)
+    new_name = re.sub(pattern, "", name)
+    return _validate_name(new_name, doc)
 
 
 class DocumentSavingHandler(adsk.core.DocumentEventHandler):
