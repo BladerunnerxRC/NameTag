@@ -17,3 +17,11 @@ behaviour can be customised through the provided settings dialog.
 
 The core logic resides in the `rename_document` function. It applies the chosen
 strategy based on the regular expression pattern entered in the settings dialog.
+
+Every successful rename is also recorded to `rename_history.json` inside the
+add-in directory. Each log entry stores the timestamp, original name, new name
+and whether the save was triggered manually or via autosave.
+
+Before applying a rename, the add-in validates the result by removing invalid
+characters (`/`, `\`, `?`, `*`, `:`), trimming overly long names to 128
+characters and warning when a name collision is detected in the parent folder.

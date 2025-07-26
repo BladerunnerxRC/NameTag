@@ -3,6 +3,8 @@ import adsk.fusion
 import traceback
 import re
 import datetime
+import os
+import json
 
 handlers = []
 
@@ -15,6 +17,67 @@ settings = {
     "export_path": "",
 }
 
+# Path where rename history will be stored.
+HISTORY_FILE = os.path.join(os.path.dirname(__file__), "rename_history.json")
+
+
+def _log_history(old_name: str, new_name: str, source: str) -> None:
+    """Append rename information to HISTORY_FILE."""
+    entry = {
+        "timestamp": datetime.datetime.now().isoformat(),
+        "old_name": old_name,
+        "new_name": new_name,
+        "source": source,
+    }
+    try:
+        if os.path.exists(HISTORY_FILE):
+            with open(HISTORY_FILE, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        else:
+            data = []
+        data.append(entry)
+        with open(HISTORY_FILE, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+    except Exception as exc:
+        # Logging to Fusion console for debugging only; failure shouldn't stop renaming
+        adsk.core.Application.get().log(f"History log failed: {exc}")
+
+
+_INVALID_CHARS = re.compile(r"[\\/\\?\\*:]")
+
+
+def _name_collision(name: str, doc) -> bool:
+    """Return True if another data file in the parent folder has ``name``."""
+    try:
+        df = getattr(doc, "dataFile", None)
+        if not df:
+            return False
+        parent = df.parentFolder
+        for item in parent.dataFiles:
+            if item.name == name and item.id != df.id:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _validate_name(name: str, doc) -> str:
+    """Sanitize ``name`` and warn about potential issues."""
+    app = adsk.core.Application.get()
+    if _INVALID_CHARS.search(name):
+        app.log(f"Invalid characters removed from '{name}'")
+        name = _INVALID_CHARS.sub("_", name)
+
+    max_len = 128
+    if len(name) > max_len:
+        app.log(f"Name truncated to {max_len} characters")
+        name = name[:max_len]
+
+    if _name_collision(name, doc):
+        app.log(f"Warning: a file named '{name}' already exists")
+
+    return name
+
 # IDs used for the command and UI elements so we can clean them up properly.
 CMD_ID = "NameTaggerSettingsCmd"
 _cmd_def = None
@@ -25,19 +88,22 @@ def rename_document(name: str, doc) -> str:
     """Apply the selected renaming strategy to ``name``."""
     pattern = settings.get("regex", r"\s*v\d+$")
     if not re.search(pattern, name):
-        return name
+        return _validate_name(name, doc)
 
     strategy = settings.get("strategy", "remove")
     if strategy == "timestamp":
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        return re.sub(pattern, ts, name)
+        new_name = re.sub(pattern, ts, name)
+        return _validate_name(new_name, doc)
     elif strategy == "revision":
         rev = getattr(doc, "revisionId", "1")
         base = re.sub(pattern, "", name)
-        return f"r{rev}_{base}"
+        new_name = f"r{rev}_{base}"
+        return _validate_name(new_name, doc)
 
     # Default behaviour is to remove the suffix
-    return re.sub(pattern, "", name)
+    new_name = re.sub(pattern, "", name)
+    return _validate_name(new_name, doc)
 
 
 class DocumentSavingHandler(adsk.core.DocumentEventHandler):
@@ -52,9 +118,13 @@ class DocumentSavingHandler(adsk.core.DocumentEventHandler):
             clean = rename_document(original, doc)
             if original != clean:
                 doc.name = clean
+                source = (
+                    "autosave" if getattr(args, "isAutoSave", False) else "manual"
+                )
                 adsk.core.Application.get().log(
                     f"Renamed document from '{original}' to '{clean}'"
                 )
+                _log_history(original, clean, source)
         except Exception:
             adsk.core.Application.get().log(
                 "Failed:\n{}".format(traceback.format_exc())
